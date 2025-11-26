@@ -1,0 +1,6 @@
+notes.md
+data/
+.ipynb_checkpoints/
+splax.egg-info
+__pycache__
+notebooks/
