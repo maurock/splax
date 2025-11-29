@@ -61,11 +61,11 @@ def get_projective_jacobian(
         [ 0,     fy/z, -(fy*y)/z^2 ]
     """
     # Homogeneous coordinates
-    xyz_hom = jnp.concatenate([xyz, jnp.ones((1,))])
+    xyz_hom = jnp.concatenate([xyz, jnp.ones((1,), dtype=xyz.dtype)])
     xyz_cam = (camera_params.w2c @ xyz_hom)[:3]  # (3)
 
     x, y, z = xyz_cam[0], xyz_cam[1], xyz_cam[2]
-    z = jnp.clip(z, a_min=0.001)  # avoid division by zero
+    z = jnp.clip(z, a_min=0.01)
 
     zeros = jnp.zeros_like(x)
 

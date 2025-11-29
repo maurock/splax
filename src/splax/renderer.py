@@ -49,7 +49,15 @@ class SplaxRenderer:
         means2d, cov2d, depths = project_all_gaussians(params, camera_params)
 
         # Push invalid gaussians to the end by setting depth to infinity
-        valid_mask = depths > 0.2
+        H, W = camera_params.img_height, camera_params.img_width
+        margin = 20.0
+        in_bounds = (
+            (means2d[:, 0] >= -margin)
+            & (means2d[:, 0] <= W + margin)
+            & (means2d[:, 1] >= -margin)
+            & (means2d[:, 1] <= H + margin)
+        )
+        valid_mask = (depths > 0.2) & in_bounds
         depths = jnp.where(valid_mask, depths, jnp.inf)
 
         sorted_indices = jnp.argsort(depths)
@@ -60,7 +68,7 @@ class SplaxRenderer:
         color = jax.nn.sigmoid(params.sh[sorted_indices])  # [N, 3]
         valid_mask = valid_mask[sorted_indices]
 
-        cov2d = cov2d + jnp.eye(2) * 0.3  # Numerical stability
+        cov2d = cov2d + jnp.eye(2, dtype=cov2d.dtype) * 0.3  # Numerical stability
         inv_cov2d = jnp.linalg.inv(cov2d)  # [N, 2, 2]
 
         # Compute gaussians radius (3 sigma for coverage 99.7%)
@@ -128,6 +136,7 @@ class SplaxRenderer:
             py = min_y + py
 
             pixels = jnp.stack([px, py], axis=-1).reshape(-1, 2)  # [P, 2]
+            pixels = pixels.astype(means.dtype)
 
             # Optimize calculation of Malahanobis distance (as in original paper)
             # inv_cov[idx] = [[A, B/2], [B/2, C]]
@@ -142,8 +151,8 @@ class SplaxRenderer:
 
             alpha = opacities.flatten() * G * valid[None, :]  # Apply valid mask here
 
-            # Transmittance T_i = prod(1 - alpha_j) for j < i
-            # We append a 1.0 at the start for the first gaussian
+            # Transmittance T_i = prod(1 - alpha_j) for j < i, so
+            # we need to add a 1.0 at the start for the first gaussian
             transmittance = jnp.cumprod(1.0 - alpha + 1e-10, axis=1)
             transmittance = jnp.concatenate(
                 [jnp.ones((pixels.shape[0], 1)), transmittance[:, :-1]], axis=1
@@ -177,5 +186,4 @@ class SplaxRenderer:
         # [Ny, T, Nx, T, 3] -> [Ny * T, Nx * T, 3]
         image = grid.reshape(num_tiles_y * tile_size, num_tiles_x * tile_size, 3)
 
-        # Crop padding
         return image[:H, :W, :]

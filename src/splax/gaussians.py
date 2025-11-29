@@ -25,12 +25,14 @@ class GaussianParams:
     def make_gaussian_params(
         cls,
         N: int,
+        seed: int = 0,
     ) -> "GaussianParams":
         """Create default GaussianParams."""
-        xyz = jax.random.uniform(jax.random.PRNGKey(0), (N, 3)) * 2.0 - 1.0
-        sh = logit(jax.random.uniform(jax.random.PRNGKey(0), (N, 3)))
-        opacity = logit(jax.random.uniform(jax.random.PRNGKey(0), (N, 1)))
-        scale = jax.random.uniform(jax.random.PRNGKey(0), (N, 3)) * 0.01
+        random_key = jax.random.PRNGKey(seed)
+        xyz = jax.random.uniform(random_key, (N, 3)) * 2.0 - 1.0
+        sh = logit(jnp.clip(jax.random.uniform(random_key, (N, 3)), 1e-6, 1 - 1e-6))
+        opacity = logit(jnp.clip(jax.random.uniform(random_key, (N, 1)), 1e-6, 1 - 1e-6))
+        scale = jnp.ones((N, 3)) * 0.01
         log_scale = jnp.log(scale)
         quaternion = jnp.tile(jnp.array([[1.0, 0.0, 0.0, 0.0]]), (N, 1))
 
@@ -93,7 +95,7 @@ class GaussianParams:
 
 def quaternion_to_rot_matrix(q: Float[Array, "4"]) -> Float[Array, "3 3"]:
     """Convert a quaternion to a rotation matrix."""
-    q = q / jnp.linalg.norm(q, axis=-1, keepdims=True)
+    q = q / (jnp.linalg.norm(q, axis=-1, keepdims=True) + 1e-9)
     w, x, y, z = q
 
     return jnp.array(
@@ -110,7 +112,9 @@ def compute_covariance_3d(
     quaternion: Float[Array, "4"],
 ) -> Float[Array, "3 3"]:
     """Compute the 3D covariance matrix: Sigma = R * S * S^T * R^T"""
-    S = jnp.diag(jnp.exp(log_scale))  # (3, 3)
+    scale = jnp.exp(log_scale)
+    scale = jnp.clip(scale, a_max=1000.0)
+    S = jnp.diag(scale)  # (3, 3)
     R = quaternion_to_rot_matrix(quaternion)  # (3, 3)
 
     RS = R @ S  # (3, 3)
