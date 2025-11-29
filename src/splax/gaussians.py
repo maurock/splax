@@ -24,7 +24,7 @@ class GaussianParams:
         xyz = jax.random.uniform(jax.random.PRNGKey(0), (N, 3)) * 2.0 - 1.0
         sh = jax.random.uniform(jax.random.PRNGKey(0), (N, 3))
         opacity = jax.random.uniform(jax.random.PRNGKey(0), (N, 1))
-        scale = jax.random.uniform(jax.random.PRNGKey(0), (N, 3)) * 0.1
+        scale = jax.random.uniform(jax.random.PRNGKey(0), (N, 3)) * 0.01
         log_scale = jnp.log(scale)
         quaternion = jnp.tile(jnp.array([[1.0, 0.0, 0.0, 0.0]]), (N, 1))
 
