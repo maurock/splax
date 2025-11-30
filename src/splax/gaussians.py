@@ -26,11 +26,15 @@ class GaussianParams:
         cls,
         N: int,
         seed: int = 0,
+        sh_degree: int = 3,
     ) -> "GaussianParams":
         """Create default GaussianParams."""
         random_key = jax.random.PRNGKey(seed)
         xyz = jax.random.uniform(random_key, (N, 3)) * 2.0 - 1.0
-        sh = logit(jnp.clip(jax.random.uniform(random_key, (N, 3)), 1e-6, 1 - 1e-6))
+        sh_dimensions = (sh_degree + 1) ** 2
+        sh_dc = logit(jnp.clip(jax.random.uniform(random_key, (N, 3)), 1e-6, 1 - 1e-6))
+        sh_rest = jnp.zeros(shape=(N, (sh_dimensions - 1) * 3))
+        sh = jnp.concatenate([sh_dc, sh_rest], axis=-1)
         opacity = logit(jnp.clip(jax.random.uniform(random_key, (N, 1)), 1e-6, 1 - 1e-6))
         scale = jnp.ones((N, 3)) * 0.01
         log_scale = jnp.log(scale)
@@ -92,6 +96,36 @@ class GaussianParams:
         self.sh = logit(rgb_colors)
         self.xyz = points_world[indices]
 
+    def initialize_with_camera_rays(self, cameras: list) -> Float[Array, "N 3"]:
+        """Initialize the Gaussian positions along camera rays."""
+        points_world_all = []
+        for i, cam in enumerate(cameras):
+            pixel_xx, pixel_yy = jnp.meshgrid(jnp.arange(cam.img_width), jnp.arange(cam.img_height))
+            pixel_pos = jnp.stack(
+                [
+                    pixel_xx - cam.img_width / 2,
+                    pixel_yy - cam.img_height / 2,
+                    jnp.ones_like(pixel_xx) * cam.focal_x,
+                ],
+                axis=-1,
+            )  # [H, W, 3]
+            directions = pixel_pos / jnp.linalg.norm(pixel_pos, axis=-1, keepdims=True)
+            points_cam = directions * jax.random.uniform(
+                jax.random.PRNGKey(i), shape=directions.shape, minval=0.2, maxval=6
+            )  # [H, W, 3]
+            points_world = transform_to_world(points_cam, cam.c2w)  # [H, W, 3]
+            points_world = points_world.reshape(-1, 3)
+            points_world_all.append(points_world)
+        points_world_all = jnp.concatenate(points_world_all, axis=0)
+        indices = jax.random.randint(
+            shape=(self.xyz.shape[0],),
+            key=jax.random.PRNGKey(0),
+            minval=0,
+            maxval=points_world_all.shape[0] - 1,
+            dtype=jnp.int32,
+        )
+        return points_world_all[indices]
+
 
 def quaternion_to_rot_matrix(q: Float[Array, "4"]) -> Float[Array, "3 3"]:
     """Convert a quaternion to a rotation matrix."""
@@ -105,6 +139,73 @@ def quaternion_to_rot_matrix(q: Float[Array, "4"]) -> Float[Array, "3 3"]:
             [2 * (x * z - w * y), 2 * (y * z + w * x), 2 * (w**2 + z**2) - 1],
         ]
     )
+
+
+def eval_sh(sh_coeffs: Float[Array, "N D"], view_dirs: Float[Array, "N 3"]) -> Float[Array, "N 3"]:
+    """Evaluates Spherical Harmonics up to degree 3.
+
+    Args:
+        sh_coeffs: SH coefficients
+        view_dirs: view directions from the camera to the gaussians"""
+    dir = view_dirs / (jnp.linalg.norm(view_dirs, axis=-1, keepdims=True) + 1e-9)
+    x, y, z = dir[..., 0], dir[..., 1], dir[..., 2]
+
+    sh_coeffs = sh_coeffs.reshape(-1, 16, 3)
+
+    c0 = 0.28209479177387814
+
+    c1 = 0.4886025119029199
+
+    c2_0 = 1.0925484305920792
+    c2_1 = -1.0925484305920792
+    c2_2 = 0.31539156525252005
+    c2_3 = -1.0925484305920792
+    c2_4 = 0.5462742152960396
+
+    c3_0 = -0.5900435899266435
+    c3_1 = 2.890611442640554
+    c3_2 = -0.4570457994644658
+    c3_3 = 0.3731763325901154
+    c3_4 = -0.4570457994644658
+    c3_5 = 1.445305721320277
+    c3_6 = -0.5900435899266435
+
+    result = c0 * sh_coeffs[:, 0]
+
+    if sh_coeffs.shape[1] > 1:
+        result = (
+            result
+            - c1 * y[:, None] * sh_coeffs[:, 1]
+            + c1 * z[:, None] * sh_coeffs[:, 2]
+            - c1 * x[:, None] * sh_coeffs[:, 3]
+        )
+
+    if sh_coeffs.shape[1] > 4:
+        xx, yy, zz = x * x, y * y, z * z
+        xy, xz, yz = x * y, x * z, y * z
+
+        result = (
+            result
+            + c2_0 * xy[:, None] * sh_coeffs[:, 4]
+            + c2_1 * yz[:, None] * sh_coeffs[:, 5]
+            + c2_2 * (2.0 * zz - xx - yy)[:, None] * sh_coeffs[:, 6]
+            + c2_3 * xz[:, None] * sh_coeffs[:, 7]
+            + c2_4 * (xx - yy)[:, None] * sh_coeffs[:, 8]
+        )
+
+    if sh_coeffs.shape[1] > 9:
+        result = (
+            result
+            + c3_0 * y[:, None] * (3 * x * x - y * y)[:, None] * sh_coeffs[:, 9]
+            + c3_1 * xy[:, None] * z[:, None] * sh_coeffs[:, 10]
+            + c3_2 * y[:, None] * (4 * z * z - x * x - y * y)[:, None] * sh_coeffs[:, 11]
+            + c3_3 * z[:, None] * (2 * z * z - 3 * x * x - 3 * y * y)[:, None] * sh_coeffs[:, 12]
+            + c3_4 * x[:, None] * (4 * z * z - x * x - y * y)[:, None] * sh_coeffs[:, 13]
+            + c3_5 * z[:, None] * (x * x - y * y)[:, None] * sh_coeffs[:, 14]
+            + c3_6 * x[:, None] * (x * x - 3 * y * y)[:, None] * sh_coeffs[:, 15]
+        )
+
+    return jax.nn.sigmoid(result)
 
 
 def compute_covariance_3d(

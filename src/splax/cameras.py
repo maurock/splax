@@ -16,6 +16,7 @@ class CameraParams:
     """Defines single camera"""
 
     w2c: Float[Array, "4 4"]
+    c2w: Float[Array, "4 4"]
     img_width: int = struct.field(pytree_node=False)
     img_height: int = struct.field(pytree_node=False)
     focal_x: float = struct.field(pytree_node=False)
@@ -33,9 +34,11 @@ class CameraParams:
         """Create CameraParams with given parameters.
         We assume +Z is forward, +X is right, +Y is up.
         """
+        c2w = jnp.linalg.inv(w2c)
 
         return CameraParams(
             w2c=w2c,
+            c2w=c2w,
             focal_x=focal_x,
             focal_y=focal_y,
             img_width=img_width,

@@ -65,10 +65,13 @@ class SplaxRenderer:
         means2d = means2d[sorted_indices]  # [N, 2]
         cov2d = cov2d[sorted_indices]  # [N, 2, 2]
         opacity = jax.nn.sigmoid(params.opacity[sorted_indices])  # [N, 1]
-        color = jax.nn.sigmoid(params.sh[sorted_indices])  # [N, 3]
+
+        view_dirs = params.xyz[sorted_indices] - camera_params.c2w[:3, 3]  # [N, 3]
+        color = gaussians.eval_sh(params.sh[sorted_indices], view_dirs)  # [N, 3]
+
         valid_mask = valid_mask[sorted_indices]
 
-        cov2d = cov2d + jnp.eye(2, dtype=cov2d.dtype) * 0.3  # Numerical stability
+        cov2d = cov2d + jnp.eye(2, dtype=cov2d.dtype) * 1e-4  # Numerical stability
         inv_cov2d = jnp.linalg.inv(cov2d)  # [N, 2, 2]
 
         # Compute gaussians radius (3 sigma for coverage 99.7%)

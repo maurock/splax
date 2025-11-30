@@ -37,9 +37,7 @@ class ColmapDataset:
         images = cls.make_images(image_paths, downscale=downscale)
 
         return ColmapDataset(
-            path=path,
-            cameras=cameras,
-            images=images,
+            path=path, cameras=cameras, images=images, resize_image_factor=downscale
         )
 
     @classmethod
@@ -99,3 +97,17 @@ class ColmapDataset:
 
         images = jnp.stack(img_list, axis=0)  # (N, H, W, 3)
         return images
+
+    def get_bounding_box_cameras(self) -> Float[Array, "N 6"]:
+        """Get bounding box cameras."""
+        bbox_cameras = []
+        for cam in self.cameras:
+            c2w = jnp.linalg.inv(cam.w2c)
+            cam_pos = c2w[:3, 3]
+            bbox_cameras.append(cam_pos.flatten())
+        bbox_cameras_array = jnp.stack(bbox_cameras, axis=0)
+        bbox_min = jnp.min(bbox_cameras_array, axis=0)
+        bbox_max = jnp.max(bbox_cameras_array, axis=0)
+        bbox_cameras = jnp.concatenate([bbox_min, bbox_max], axis=0)
+
+        return bbox_cameras
